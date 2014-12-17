@@ -383,6 +383,10 @@ class Build(object):
 
 #-----------------------------------------------------------------------------
 class Server(object):
+
+    TIMEOUT = 10  # Time in seconds passed to all connections with Jenkins
+    TIMEOUT_RETRIES = 3  # Amount of retries after a timeout
+
     def __init__(self, url, username=None, password=None):
         self.url = url if url.endswith('/') else url + '/'
         self.auth = HTTPBasicAuth(username, password) if username else None
@@ -391,23 +395,47 @@ class Server(object):
         cls = self.__class__.__name__
         return '%s(%s)' % (cls, self.url)
 
+    def _get(self, *args, **kw):
+        kw.setdefault('timeout', self.TIMEOUT)
+        for _ in xrange(self.TIMEOUT_RETRIES + 1):
+            try:
+                return requests.get(*args, **kw)
+            except requests.exceptions.Timeout as timeout_exception:
+                print 'TIMEOUT!'
+                continue
+        else:
+            # If we failed TIMEOUT_RETRIES times, raise the last timeout error.
+            raise timeout_exception
+
+    def _post(self, *args, **kw):
+        kw.setdefault('timeout', self.TIMEOUT)
+        for _ in xrange(self.TIMEOUT_RETRIES + 1):
+            try:
+                return requests.post(*args, **kw)
+            except requests.exceptions.Timeout as timeout_exception:
+                print 'TIMEOUT!'
+                continue
+        else:
+            # If we failed TIMEOUT_RETRIES times, raise the last timeout error.
+            raise timeout_exception
+
     def urljoin(self, *args):
         return '%s%s' % (self.url, '/'.join(args))
 
     def post(self, url, throw=True, **kw):
-        res = requests.post(self.urljoin(url), auth=self.auth, **kw)
+        res = self._post(self.urljoin(url), auth=self.auth, **kw)
         throw and res.raise_for_status()
         return res
 
     def get(self, url, throw=True, **kw):
-        res = requests.get(self.urljoin(url), auth=self.auth, **kw)
+        res = self._get(self.urljoin(url), auth=self.auth, **kw)
         throw and res.raise_for_status()
         return res
 
     def json(self, url, errmsg=None, throw=True, **kw):
         url = self.urljoin(url)
         try:
-            res = requests.get(url, auth=self.auth, **kw)
+            res = self._get(url, auth=self.auth, **kw)
             throw and res.raise_for_status()
             if not res:
                 raise JenkinsError(errmsg)
